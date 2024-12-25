@@ -2,20 +2,20 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 import sqlite3
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram import F
-
 
 API_TOKEN = "6852263140:AAH47rcJm47MDnK6T4lYxd8N-jGWfGDBwQo"  # Замените на ваш токен
 
-
+# Инициализация бота и диспетчера
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-
+# Подключение к базе данных
 db = sqlite3.connect("users.db")
 cursor = db.cursor()
 cursor.execute("""
@@ -25,15 +25,19 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 db.commit()
 
-
+# Клавиатура для управления
 keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="Рассылка")]
+        [KeyboardButton(text="/spam")],
     ],
     resize_keyboard=True
 )
 
+# Определение состояний для FSM
+class SpamStates(StatesGroup):
+    waiting_for_message = State()
 
+# Хендлер для команды /start
 @dp.message(Command("start"))
 async def start(message: types.Message):
     user_id = message.from_user.id
@@ -41,16 +45,16 @@ async def start(message: types.Message):
     db.commit()
     await message.answer("Привет! Ты добавлен в базу данных.", reply_markup=keyboard)
 
+# Хендлер для команды /spam
+@dp.message(Command("spam"))
+async def spam_command(message: types.Message, state: FSMContext):
+    await message.answer("Отправьте сообщение (текст, фото, файл и т.д.) для рассылки.")
+    await state.set_state(SpamStates.waiting_for_message)
 
-@dp.message(lambda msg: msg.text == "Рассылка")
-async def broadcast_prompt(message: types.Message):
-    await message.answer("Отправьте текст или фото с подписью для рассылки.")
-
-
-from aiogram import F
-
-@dp.message(F.content_type.in_({"text", "photo", "document", "audio", "video"}))
-async def broadcast(message: types.Message):
+# Хендлер для получения сообщения в состоянии ожидания рассылки
+@dp.message(SpamStates.waiting_for_message, F.content_type.in_({"text", "photo", "document", "audio", "video"}))
+async def broadcast(message: types.Message, state: FSMContext):
+    # Определяем тип контента
     if message.photo:
         photo = message.photo[-1].file_id
         caption = message.caption
@@ -92,8 +96,14 @@ async def broadcast(message: types.Message):
             print(f"Не удалось отправить сообщение пользователю {user[0]}: {e}")
 
     await message.answer(f"Рассылка завершена. Успешно отправлено: {successful}.")
+    await state.clear()  # Сбрасываем состояние
 
+# Игнорирование других сообщений, если состояние не активно
+@dp.message()
+async def ignore_message(message: types.Message):
+    await message.answer("Используйте команду /spam, чтобы начать рассылку.")
 
+# Основная функция
 async def main():
     await dp.start_polling(bot)
 
